@@ -1,7 +1,6 @@
 <?php
 namespace Grav\Plugin;
 
-use DateTime;
 use Grav\Common\Data;
 use Grav\Common\File\CompiledYamlFile;
 use Grav\Common\GPM\GPM;
@@ -82,11 +81,6 @@ class Admin
     protected $pages_count;
 
     /**
-     * @var Array
-     */
-    protected $permissions;
-
-    /**
      * Constructor.
      *
      * @param Grav   $grav
@@ -103,7 +97,6 @@ class Admin
         $this->uri = $this->grav['uri'];
         $this->session = $this->grav['session'];
         $this->user = $this->grav['user'];
-        $this->permissions = [];
         $language = $this->grav['language'];
 
         if ($language->enabled()) {
@@ -113,9 +106,7 @@ class Admin
             //Set the currently active language for the admin
             $language = $this->grav['uri']->param('lang');
             if (!$language) {
-                if (!$this->session->admin_lang) {
-                    $this->session->admin_lang = $this->grav['language']->getLanguage();
-                }
+                if (!$this->session->admin_lang) $this->session->admin_lang = 'en';
                 $language = $this->session->admin_lang;
             }
             $this->grav['language']->setActive($language ?: 'en');
@@ -167,15 +158,14 @@ class Admin
     /**
      * Authenticate user.
      *
-     * @param  array $data Form data.
-     * @param  array $post Additional form fields.
+     * @param  array $form Form fields.
      *
      * @return bool
      */
-    public function authenticate($data, $post)
+    public function authenticate($form)
     {
-        if (!$this->user->authenticated && isset($data['username']) && isset($data['password'])) {
-            $user = User::load($data['username']);
+        if (!$this->user->authenticated && isset($form['username']) && isset($form['password'])) {
+            $user = User::load($form['username']);
 
             //default to english if language not set
             if (empty($user->language)) {
@@ -186,7 +176,7 @@ class Admin
                 $user->authenticated = true;
 
                 // Authenticate user.
-                $result = $user->authenticate($data['password']);
+                $result = $user->authenticate($form['password']);
 
                 if ($result) {
                     $this->user = $this->session->user = $user;
@@ -194,11 +184,9 @@ class Admin
                     /** @var Grav $grav */
                     $grav = $this->grav;
 
-                    unset($this->grav['user']);
-                    $this->grav['user'] = $user;
-
                     $this->setMessage($this->translate('PLUGIN_ADMIN.LOGIN_LOGGED_IN'), 'info');
-                    $grav->redirect($post['redirect']);
+                    $redirect_route = $this->uri->route();
+                    $grav->redirect($redirect_route);
                 }
             }
         }
@@ -233,11 +221,9 @@ class Admin
      *
      * @return Page
      */
-    public function page($route = false, $path = null)
+    public function page($route = false)
     {
-        if (!$path) {
-            $path = $this->route;
-        }
+        $path = $this->route;
 
         if ($route && !$path) {
             $path = '/';
@@ -275,7 +261,7 @@ class Admin
      * @return Data\Data|null
      * @throws \RuntimeException
      */
-    public function data($type, array $post = [])
+    public function data($type, $post = array())
     {
         static $data = [];
 
@@ -284,67 +270,86 @@ class Admin
         }
 
         if (!$post) {
-            $post = isset($_POST['data']) ? $_POST['data'] : [];
+            $post = isset($_POST) ? $_POST : [];
         }
 
-        /** @var UniformResourceLocator $locator */
-        $locator = $this->grav['locator'];
-        $filename = $locator->findResource("config://{$type}.yaml", true, true);
-        $file = CompiledYamlFile::instance($filename);
+        switch ($type) {
+            case 'configuration':
+            case 'system':
+                $type = 'system';
+                $blueprints = $this->blueprints("config/{$type}");
+                $config = $this->grav['config'];
+                $obj = new Data\Data($config->get('system'), $blueprints);
+                $obj->merge($post);
+                $file = CompiledYamlFile::instance($this->grav['locator']->findResource("config://{$type}.yaml"));
+                $obj->file($file);
+                $data[$type] = $obj;
+                break;
 
-        if (preg_match('|plugins/|', $type)) {
-            /** @var Plugins $plugins */
-            $plugins = $this->grav['plugins'];
-            $obj = $plugins->get(preg_replace('|plugins/|', '', $type));
+            case 'settings':
+            case 'site':
+                $type = 'site';
+                $blueprints = $this->blueprints("config/{$type}");
+                $config = $this->grav['config'];
+                $obj = new Data\Data($config->get('site'), $blueprints);
+                $obj->merge($post);
+                $file = CompiledYamlFile::instance($this->grav['locator']->findResource("config://{$type}.yaml"));
+                $obj->file($file);
+                $data[$type] = $obj;
+                break;
 
-            if (!$obj) { return []; }
+            case 'login':
+                $data[$type] = null;
+                break;
 
-            $obj->merge($post);
-            $obj->file($file);
+            default:
+                /** @var UniformResourceLocator $locator */
+                $locator = $this->grav['locator'];
+                $filename = $locator->findResource("config://{$type}.yaml", true, true);
+                $file = CompiledYamlFile::instance($filename);
 
-            $data[$type] = $obj;
-        } elseif (preg_match('|themes/|', $type)) {
-            /** @var Themes $themes */
-            $themes = $this->grav['themes'];
-            $obj = $themes->get(preg_replace('|themes/|', '', $type));
+                if (preg_match('|plugins/|', $type)) {
+                    /** @var Plugins $plugins */
+                    $plugins = $this->grav['plugins'];
+                    $obj = $plugins->get(preg_replace('|plugins/|', '', $type));
 
-            if (!$obj) { return []; }
+                    if (!$obj) { return []; }
 
-            $obj->merge($post);
-            $obj->file($file);
+                    $obj->merge($post);
+                    $obj->file($file);
 
-            $data[$type] = $obj;
-        } elseif (preg_match('|users/|', $type)) {
-            $obj = User::load(preg_replace('|users/|', '', $type));
-            $obj->merge($post);
+                    $data[$type] = $obj;
+                } elseif (preg_match('|themes/|', $type)) {
+                    /** @var Themes $themes */
+                    $themes = $this->grav['themes'];
+                    $obj = $themes->get(preg_replace('|themes/|', '', $type));
 
-            $data[$type] = $obj;
-        } elseif (preg_match('|user/|', $type)) {
-            $obj = User::load(preg_replace('|user/|', '', $type));
-            $obj->merge($post);
+                    if (!$obj) { return []; }
 
-            $data[$type] = $obj;
-        } elseif (preg_match('|config/|', $type)) {
-            $type = preg_replace('|config/|', '', $type);
-            $blueprints = $this->blueprints("config/{$type}");
-            $config = $this->grav['config'];
+                    $obj->merge($post);
+                    $obj->file($file);
 
-            if ($type === 'media' && count($post)) {
-                $obj = new Data\Data([], $blueprints); // saving
-            } else {
-                $obj = new Data\Data($config->get($type, []), $blueprints);
-            }
+                    $data[$type] = $obj;
+                } elseif (preg_match('|users/|', $type)) {
+                    $obj = User::load(preg_replace('|users/|', '', $type));
+                    $obj->merge($post);
 
-            $obj->merge($post);
-
-            // FIXME: We shouldn't allow user to change configuration files in system folder!
-            $filename = $this->grav['locator']->findResource("config://{$type}.yaml")
-                ?: $this->grav['locator']->findResource("config://{$type}.yaml", true, true);
-            $file = CompiledYamlFile::instance($filename);
-            $obj->file($file);
-            $data[$type] = $obj;
-        } else {
-            throw new \RuntimeException("Data type '{$type}' doesn't exist!");
+                    $data[$type] = $obj;
+                } elseif (preg_match('|config/|', $type)) {
+                    $type = preg_replace('|config/|', '', $type);
+                    $blueprints = $this->blueprints("config/{$type}");
+                    $config = $this->grav['config'];
+                    $obj = new Data\Data($config->get($type, []), $blueprints);
+                    $obj->merge($post);
+                    // FIXME: We shouldn't allow user to change configuration files in system folder!
+                    $filename = $this->grav['locator']->findResource("config://{$type}.yaml")
+                        ?: $this->grav['locator']->findResource("config://{$type}.yaml", true, true);
+                    $file = CompiledYamlFile::instance($filename);
+                    $obj->file($file);
+                    $data[$type] = $obj;
+                } else {
+                    throw new \RuntimeException("Data type '{$type}' doesn't exist!");
+                }
         }
 
         return $data[$type];
@@ -469,111 +474,6 @@ class Admin
         ) use ($gpm) {
             return !$gpm->isPluginInstalled($slug);
         });
-    }
-
-    public function getPackageFromGPM($package_slug)
-    {
-        $package = $this->plugins(true)[$package_slug];
-        if (!$package) {
-            $package = $this->themes(true)[$package_slug];
-        }
-
-        return $package;
-    }
-
-    /**
-     * Generate an array of dependencies for a package, used to generate a list of
-     * packages that can be removed when removing a package.
-     *
-     * @param string $slug          The package slug
-     *
-     * @return array|bool
-     */
-    public function dependenciesThatCanBeRemovedWhenRemoving($slug)
-    {
-        $gpm = $this->gpm();
-        if (!$gpm) {
-            return false;
-        }
-
-        $dependencies = [];
-
-        $package = $this->getPackageFromGPM($slug);
-
-        if ($package) {
-            if ($package->dependencies) {
-                foreach ($package->dependencies as $dependency) {
-                    if (count($gpm->getPackagesThatDependOnPackage($dependency)) > 1) {
-                        continue;
-                    }
-
-                    if (!in_array($dependency, $dependencies)) {
-                        if (!in_array($dependency, ['admin', 'form', 'login', 'email'])) {
-                            $dependencies[] = $dependency;
-                        }
-                    }
-                }
-            }
-        }
-
-        return $dependencies;
-    }
-
-    /**
-     * Get list of packages that depend on the passed package slug
-     *
-     * @param string $slug          The package slug
-     *
-     * @return array|bool
-     */
-    public function getPackagesThatDependOnPackage($slug)
-    {
-        $gpm = $this->gpm();
-        if (!$gpm) {
-            return false;
-        }
-
-        return $gpm->getPackagesThatDependOnPackage($slug);
-    }
-
-    /**
-     * Check the passed packages list can be updated
-     *
-     * @param $packages
-     *
-     * @throws \Exception
-     * @return bool
-     */
-    public function checkPackagesCanBeInstalled($packages)
-    {
-        $gpm = $this->gpm();
-        if (!$gpm) {
-            return false;
-        }
-
-        $this->gpm->checkPackagesCanBeInstalled($packages);
-
-        return true;
-    }
-
-    /**
-     * Get an array of dependencies needed to be installed or updated for a list of packages
-     * to be installed.
-     *
-     * @param array $packages The packages slugs
-     *
-     * @return array|bool
-     */
-    public function getDependenciesNeededToInstall($packages)
-    {
-        $gpm = $this->gpm();
-        if (!$gpm) {
-            return false;
-        }
-
-        $dependencies = $this->gpm->getDependencies($packages);
-
-        return $dependencies;
     }
 
     /**
@@ -757,9 +657,6 @@ class Admin
                             }
                         }
                     }
-                    if ($data['visible'] == 1 && !$page->order()) {
-                        $header['visible'] = $data['visible'];
-                    }
 
                 }
 
@@ -940,10 +837,9 @@ class Admin
      *
      * @param array|mixed $args
      *
-     * @param mixed $languages
      * @return string
      */
-    public function translate($args, $languages = null)
+    public function translate($args)
     {
         if (is_array($args)) {
             $lookup = array_shift($args);
@@ -952,12 +848,7 @@ class Admin
             $args = [];
         }
 
-        if (!$languages) {
-            $languages = [$this->grav['user']->authenticated ? $this->grav['user']->language : ($this->grav['language']->getLanguage() ?: 'en')];
-        } else {
-            $languages = (array) $languages;
-        }
-
+        $languages = [$this->grav['user']->authenticated ? $this->grav['user']->language : 'en'];
 
         if ($lookup) {
             if (empty($languages) || reset($languages) == null) {
@@ -995,84 +886,23 @@ class Admin
     }
 
     /**
-     * Guest date format based on euro/US
-     *
-     * @param $date
-     * @return string
-     */
-    public function guessDateFormat($date)
-    {
-        static $guess;
-
-        if (!isset($guess[$date])) {
-            if (Utils::contains($date, '/')) {
-                if ($this->validateDate($date, 'm/d/Y H:i')) {
-                    $guess[$date] = 'm/d/Y H:i';
-                } elseif ($this->validateDate($date, 'm/d/y H:i')) {
-                    $guess[$date] = 'm/d/y H:i';
-                } elseif ($this->validateDate($date, 'm/d/Y G:i')) {
-                    $guess[$date] = 'm/d/Y G:i';
-                } elseif ($this->validateDate($date, 'm/d/y G:i')) {
-                    $guess[$date] = 'm/d/y G:i';
-                } elseif ($this->validateDate($date, 'm/d/Y h:ia')) {
-                    $guess[$date] = 'm/d/Y h:ia';
-                } elseif ($this->validateDate($date, 'm/d/y h:ia')) {
-                    $guess[$date] = 'm/d/y h:ia';
-                } elseif ($this->validateDate($date, 'm/d/Y g:ia')) {
-                    $guess[$date] = 'm/d/Y g:ia';
-                } elseif ($this->validateDate($date, 'm/d/y g:ia')) {
-                    $guess[$date] = 'm/d/y g:ia';
-                }
-            } elseif (Utils::contains($date, '-')) {
-                if ($this->validateDate($date, 'd-m-Y H:i')) {
-                    $guess[$date] = 'd-m-Y H:i';
-                } elseif ($this->validateDate($date, 'd-m-y H:i')) {
-                    $guess[$date] = 'd-m-y H:i';
-                } elseif ($this->validateDate($date, 'd-m-Y G:i')) {
-                    $guess[$date] = 'd-m-Y G:i';
-                } elseif ($this->validateDate($date, 'd-m-y G:i')) {
-                    $guess[$date] = 'd-m-y G:i';
-                } elseif ($this->validateDate($date, 'd-m-Y h:ia')) {
-                    $guess[$date] = 'd-m-Y h:ia';
-                } elseif ($this->validateDate($date, 'd-m-y h:ia')) {
-                    $guess[$date] = 'd-m-y h:ia';
-                } elseif ($this->validateDate($date, 'd-m-Y g:ia')) {
-                    $guess[$date] = 'd-m-Y g:ia';
-                } elseif ($this->validateDate($date, 'd-m-y g:ia')) {
-                    $guess[$date] = 'd-m-y g:ia';
-                }
-            } else {
-                $guess[$date] = 'd-m-Y H:i';
-            }
-        }
-
-        return $guess[$date];
-    }
-
-    public function validateDate($date, $format)
-    {
-        $d = DateTime::createFromFormat($format, $date);
-        return $d && $d->format($format) == $date;
-    }
-
-    /**
      * @param string $php_format
      * @return string
      */
-    public function dateformatToMomentJS($php_format)
+    function dateformat2Kendo($php_format)
     {
         $SYMBOLS_MATCHING = array(
             // Day
-            'd' => 'DD',
+            'd' => 'dd',
             'D' => 'ddd',
-            'j' => 'D',
+            'j' => 'd',
             'l' => 'dddd',
-            'N' => 'E',
-            'S' => 'Do',
-            'w' => 'd',
-            'z' => 'DDD',
+            'N' => '',
+            'S' => '',
+            'w' => '',
+            'z' => '',
             // Week
-            'W' => 'W',
+            'W' => '',
             // Month
             'F' => 'MMMM',
             'm' => 'MM',
@@ -1081,31 +911,20 @@ class Admin
             't' => '',
             // Year
             'L' => '',
-            'o' => 'GGGG',
-            'Y' => 'YYYY',
+            'o' => '',
+            'Y' => 'yyyy',
             'y' => 'yy',
             // Time
-            'a' => 'a',
-            'A' => 'A',
-            'B' => 'SSS',
+            'a' => 'tt',
+            'A' => 'tt',
+            'B' => '',
             'g' => 'h',
             'G' => 'H',
             'h' => 'hh',
             'H' => 'HH',
             'i' => 'mm',
             's' => 'ss',
-            'u' => '',
-            // Timezone
-            'e' => '',
-            'I' => '',
-            'O' => 'ZZ',
-            'P' => 'Z',
-            'T' => 'z',
-            'Z' => '',
-            // Full Date/Time
-            'c' => '',
-            'r' => 'llll ZZ',
-            'U' => 'X'
+            'u' => ''
         );
         $js_format = "";
         $escaping = false;
@@ -1130,93 +949,4 @@ class Admin
         }
         return $js_format;
     }
-
-    /**
-     * Sets the entire permissions array
-     *
-     * @param $permissions
-     */
-    public function setPermissions($permissions)
-    {
-        $this->permissions = $permissions;
-    }
-
-    /**
-     * Gets the entire permissions array
-     *
-     * @return Array
-     */
-    public function getPermissions()
-    {
-        return $this->permissions;
-    }
-
-    /**
-     * Adds a permission to the permissions array
-     *
-     * @param $permissions
-     */
-    public function addPermissions($permissions)
-    {
-        $this->permissions = array_merge($this->permissions, $permissions);
-    }
-
-    public function findFormFields($type, $fields, $found_fields = [])
-    {
-        foreach ($fields as $key => $field) {
-
-            if (isset($field['type']) && $field['type'] == $type) {
-                $found_fields[$key] = $field;
-            } elseif (isset($field['fields'])) {
-                $result = $this->findFormFields($type, $field['fields'], $found_fields);
-                if (!empty($result)) {
-                    $found_fields = array_merge($found_fields, $result);
-                }
-            }
-        }
-        return $found_fields;
-    }
-
-    public function getPagePathFromToken($path)
-    {
-        $path_parts = pathinfo($path);
-
-        $basename = '';
-        if (isset($path_parts['extension'])) {
-            $basename = '/'.$path_parts['basename'];
-            $path = $path_parts['dirname'];
-        }
-
-        $regex = '/(@self|self@)|((?:@page|page@):(?:.*))|((?:@theme|theme@):(?:.*))/';
-        preg_match($regex, $path, $matches);
-
-        if ($matches) {
-            if ($matches[1]) {
-                // self@
-                $page = $this->page(true);
-            } elseif ($matches[2]) {
-                // page@
-                $parts = explode(':', $path);
-                $route = $parts[1];
-                $page = $this->grav['page']->find($route);
-            } elseif ($matches[3]) {
-                // theme@
-                $parts = explode(':', $path);
-                $route = $parts[1];
-                $theme =  str_replace(ROOT_DIR, '', $this->grav['locator']->findResource("theme://"));
-                return $theme . $route . $basename;
-            }
-        } else {
-            return $path . $basename;
-        }
-
-        if (!$page) {
-            throw new \RuntimeException('Page route not found: ' . $path);
-        }
-
-        $path = str_replace($matches[0], rtrim($page->relativePagePath(), '/'), $path);
-
-        return $path . $basename;
-    }
-
 }

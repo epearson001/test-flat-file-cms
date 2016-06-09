@@ -1,5 +1,4 @@
 {% set form_id = form_id ? form_id : 'blueprints' %}
-{% set scope = scope ?: 'data.' %}
 
 <form id="{{ form_id }}" method="post" data-grav-form="{{ form_id }}" data-page-move>
     {% for field in blueprints.fields %}
@@ -12,7 +11,7 @@
     {% endfor %}
 
     <div class="button-bar">
-        <button data-remodal-action="cancel" class="button secondary remodal-cancel"><i class="fa fa-fw fa-close"></i> {{ "PLUGIN_ADMIN.CANCEL"|tu }}</button>
+        <a class="button secondary remodal-cancel" href="#"><i class="fa fa-fw fa-close"></i> {{ "PLUGIN_ADMIN.CANCEL"|tu }}</a>
         <button class="button primary" name="task" value="save" form="blueprints">{{ "PLUGIN_ADMIN.CONTINUE"|tu }}</button>
     </div>
 </form>

@@ -1,5 +1,4 @@
 {% set form_id = form_id ? form_id : 'blueprints' %}
-{% set scope = scope ?: 'data.' %}
 
 <form id="{{ form_id }}" method="post" data-grav-form="{{ form_id }}" data-grav-keepalive="true">
     {% for field in blueprints.fields %}
@@ -12,6 +11,6 @@
         {% endif %}
     {% endfor %}
 
-    {{ nonce_field('admin-form', 'admin-nonce')|raw }}
+    {{ nonce_field('admin-form', 'admin-nonce') }}
 
 </form>

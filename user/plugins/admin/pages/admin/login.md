@@ -9,14 +9,12 @@ form:
     fields:
         - name: username
           type: text
-          placeholder: PLUGIN_ADMIN.USERNAME
+          placeholder: Username
           autofocus: true
-          validate:
-            required: true
 
         - name: password
           type: password
-          placeholder: PLUGIN_ADMIN.PASSWORD
-          validate:
-            required: true
+          placeholder: Password
 ---
+
+

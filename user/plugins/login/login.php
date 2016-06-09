@@ -2,44 +2,42 @@
 namespace Grav\Plugin;
 
 use Grav\Plugin\Admin;
-use Grav\Common\Grav;
-use Grav\Common\Language\Language;
-use Grav\Common\Page\Page;
-use Grav\Common\Page\Pages;
+use Grav\Common\File\CompiledYamlFile;
 use Grav\Common\Plugin;
-use Grav\Common\Twig\Twig;
+use Grav\Common\Page\Page;
 use Grav\Common\User\User;
 use Grav\Common\Utils;
-use Grav\Common\Uri;
-use Grav\Plugin\Login\Login;
-use Grav\Plugin\Login\Controller;
-use Grav\Plugin\Form;
+use Grav\Plugin\Login\Utils as LoginUtils;
+
 use RocketTheme\Toolbox\Event\Event;
 use RocketTheme\Toolbox\Session\Message;
 
-/**
- * Class LoginPlugin
- * @package Grav\Plugin
- */
 class LoginPlugin extends Plugin
 {
-    /** @var string */
+    /**
+     * @var string
+     */
     protected $route;
 
-    /** @var string */
+    /**
+     * @var string
+     */
     protected $route_register;
 
-    /** @var string */
+    /**
+     * @var string
+     */
     protected $route_forgot;
 
-    /** @var bool */
+    /**
+     * @var bool
+     */
     protected $authenticated = true;
 
-    /** @var bool */
+    /**
+     * @var bool
+     */
     protected $authorized = true;
-
-    /** @var Login */
-    protected $login;
 
     /**
      * @return array
@@ -48,14 +46,14 @@ class LoginPlugin extends Plugin
     {
         return [
             'onPluginsInitialized' => ['initialize', 10000],
-            'onTask.login.login'   => ['loginController', 0],
-            'onTask.login.forgot'  => ['loginController', 0],
-            'onTask.login.logout'  => ['loginController', 0],
-            'onTask.login.reset'   => ['loginController', 0],
-            'onPageInitialized'    => ['authorizePage', 0],
-            'onTwigTemplatePaths'  => ['onTwigTemplatePaths', 0],
-            'onTwigSiteVariables'  => ['onTwigSiteVariables', -100000],
-            'onFormProcessed'      => ['onFormProcessed', 0]
+            'onTask.login.login' => ['loginController', 0],
+            'onTask.login.forgot' => ['loginController', 0],
+            'onTask.login.logout' => ['loginController', 0],
+            'onTask.login.reset' => ['loginController', 0],
+            'onPageInitialized' => ['authorizePage', 0],
+            'onTwigTemplatePaths' => ['onTwigTemplatePaths', 0],
+            'onTwigSiteVariables' => ['onTwigSiteVariables', -100000],
+            'onFormProcessed' => ['onFormProcessed', 0]
         ];
     }
 
@@ -71,6 +69,9 @@ class LoginPlugin extends Plugin
         if ($this->grav['config']->get('system.session.enabled') === false) {
             throw new \RuntimeException('The Login plugin requires "system.session" to be enabled');
         }
+
+        /** @var Grav\Common\Session */
+        $session = $this->grav['session'];
 
         // Autoload classes
         $autoload = __DIR__ . '/vendor/autoload.php';
@@ -92,15 +93,13 @@ class LoginPlugin extends Plugin
 
         // Define current user service.
         $this->grav['user'] = function ($c) {
-            /** @var Grav $c */
-
             $session = $c['session'];
 
             if (!isset($session->user)) {
                 $session->user = new User;
 
                 if ($c['config']->get('plugins.login.rememberme.enabled')) {
-                    $controller = new Controller($c, '');
+                    $controller = new Login\Controller($c, '');
                     $rememberMe = $controller->rememberMe();
 
                     // If we can present the correct tokens from the cookie, we are logged in
@@ -128,11 +127,14 @@ class LoginPlugin extends Plugin
             return $session->user;
         };
 
-        //Initialize Login Object
-        $this->login = new Login($this->grav);
+        // Manage OAuth login
+        $task = !empty($_POST['task']) ? $_POST['task'] : $uri->param('task');
+        if (!$task && isset($_POST['oauth']) || (!empty($_GET) && $session->oauth)) {
+            $this->oauthController();
+        }
 
-        //Store Login Object in Grav
-        $this->grav['login'] = $this->login;
+        // Aborted OAuth authentication (invalidate it)
+        unset($session->oauth);
 
         $admin_route = $this->config->get('plugins.admin.route');
 
@@ -160,14 +162,9 @@ class LoginPlugin extends Plugin
         }
 
         if ($uri->path() == $this->config->get('plugins.login.route_register')) {
-            if ($this->config->get('plugins.login.user_registration.enabled')) {
-                $this->enable([
-                    'onPagesInitialized' => ['addRegisterPage', 0],
-                ]);
-            } else {
-                throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.REGISTRATION_DISABLED'), 404);
-            }
-
+            $this->enable([
+                'onPagesInitialized' => ['addRegisterPage', 0],
+            ]);
         }
 
         if ($uri->path() == $this->config->get('plugins.login.route_activate')) {
@@ -207,7 +204,7 @@ class LoginPlugin extends Plugin
         $page = $pages->dispatch($route);
 
         if (!$page) {
-            // Only add forgot page if it hasn't already been defined.
+            // Only add login page if it hasn't already been defined.
             $page = new Page;
             $page->init(new \SplFileInfo(__DIR__ . "/pages/forgot.md"));
             $page->slug(basename($route));
@@ -281,7 +278,6 @@ class LoginPlugin extends Plugin
             $message = $this->grav['language']->translate('PLUGIN_LOGIN.INVALID_REQUEST');
             $messages->add($message, 'error');
             $this->grav->redirect('/');
-
             return;
         }
 
@@ -305,10 +301,10 @@ class LoginPlugin extends Plugin
                     $messages->add($message, 'info');
 
                     if ($this->config->get('plugins.login.user_registration.options.send_welcome_email', false)) {
-                        $this->login->sendWelcomeEmail($user);
+                        $this->sendWelcomeEmail($user);
                     }
                     if ($this->config->get('plugins.login.user_registration.options.send_notification_email', false)) {
-                        $this->login->sendNotificationEmail($user);
+                        $this->sendNotificationEmail($user);
                     }
 
                     if ($this->config->get('plugins.login.user_registration.options.login_after_registration', false)) {
@@ -322,11 +318,11 @@ class LoginPlugin extends Plugin
             } else {
                 $message = $this->grav['language']->translate('PLUGIN_LOGIN.INVALID_REQUEST');
                 $messages->add($message, 'error');
+
             }
         }
 
-        $redirect_route = $this->config->get('plugins.login.user_registration.redirect_after_activation', '/');
-        $this->grav->redirect($redirect_route);
+        $this->grav->redirect('/');
     }
 
     /**
@@ -343,49 +339,50 @@ class LoginPlugin extends Plugin
         if (method_exists('Grav\Common\Utils', 'getNonce')) {
             if ($task == 'login') {
                 if (!isset($post['login-form-nonce']) || !Utils::verifyNonce($post['login-form-nonce'], 'login-form')) {
-                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'),
-                        'info');
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
                     $this->authenticated = false;
                     $twig = $this->grav['twig'];
                     $twig->twig_vars['notAuthorized'] = true;
-
                     return;
                 }
-            } else {
-                if ($task == 'logout') {
-                    $nonce = $this->grav['uri']->param('logout-nonce');
-                    if (!isset($nonce) || !Utils::verifyNonce($nonce, 'logout-form')) {
-                        return;
-                    }
-                } else {
-                    if ($task == 'forgot') {
-                        if (!isset($post['forgot-form-nonce']) || !Utils::verifyNonce($post['forgot-form-nonce'],
-                                'forgot-form')
-                        ) {
-                            $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'),
-                                'info');
-
-                            return;
-                        }
-                    } else {
-                        if ($task == 'reset') {
-                            if (!isset($post['reset-form-nonce']) || !Utils::verifyNonce($post['reset-form-nonce'],
-                                    'reset-form')
-                            ) {
-                                //$this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
-                                //return;
-                            }
-                        }
-                    }
+            } else if ($task == 'logout') {
+                $nonce = $this->grav['uri']->param('logout-nonce');
+                if (!isset($nonce) || !Utils::verifyNonce($nonce, 'logout-form')) {
+                    return;
+                }
+            } else if ($task == 'forgot') {
+                if (!isset($post['forgot-form-nonce']) || !Utils::verifyNonce($post['forgot-form-nonce'], 'forgot-form')) {
+                    $this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    return;
+                }
+            } else if ($task == 'reset') {
+                if (!isset($post['reset-form-nonce']) || !Utils::verifyNonce($post['reset-form-nonce'], 'reset-form')) {
+                    //$this->grav['messages']->add($this->grav['language']->translate('PLUGIN_LOGIN.ACCESS_DENIED'), 'info');
+                    //return;
                 }
             }
         }
 
-        $controller = new Controller($this->grav, $task, $post);
+        $controller = new Login\LoginController($this->grav, $task, $post);
         $controller->execute();
         $controller->redirect();
     }
 
+    /**
+     * Initialize OAuth login controller
+     */
+    public function oauthController()
+    {
+        /** @var Uri $uri */
+        $uri = $this->grav['uri'];
+        $oauth = !empty($_POST['oauth']) ? $_POST['oauth'] : $uri->param('oauth');
+        $oauth = $oauth ?: $this->grav['session']->oauth;
+        $post = !empty($_POST) ? $_POST : [];
+
+        $controller = new Login\OAuthLoginController($this->grav, $oauth, $post);
+        $controller->execute();
+        $controller->redirect();
+    }
 
     /**
      * Authorize Page
@@ -394,9 +391,6 @@ class LoginPlugin extends Plugin
     {
         /** @var User $user */
         $user = $this->grav['user'];
-        if (!$user->get('access')) {
-            $user = User::load($user->get('username'));
-        }
 
         /** @var Page $page */
         $page = $this->grav['page'];
@@ -406,20 +400,20 @@ class LoginPlugin extends Plugin
         }
 
         $header = $page->header();
-        $rules = isset($header->access) ? (array)$header->access : [];
+        $rules = isset($header->access) ? (array) $header->access : [];
 
         $config = $this->mergeConfig($page);
 
         if ($config->get('parent_acl')) {
-            // If page has no ACL rules, use its parent's rules
-            if (!$rules) {
-                $parent = $page->parent();
-                while (!$rules and $parent) {
-                    $header = $parent->header();
-                    $rules = isset($header->access) ? (array)$header->access : [];
-                    $parent = $parent->parent();
-                }
+          // If page has no ACL rules, use its parent's rules
+          if (!$rules) {
+            $parent = $page->parent();
+            while (!$rules and $parent) {
+              $header = $parent->header();
+              $rules = isset($header->access) ? (array) $header->access : [];
+              $parent = $parent->parent();
             }
+          }
         }
 
         // Continue to the page if it has no ACL rules.
@@ -445,8 +439,6 @@ class LoginPlugin extends Plugin
         // Reset page with login page.
         if (!$user->authenticated) {
             $page = new Page;
-
-            $this->grav['session']->redirect_after_login = $this->grav['uri']->path();
 
             // Get the admin Login page is needed, else teh default
             if ($this->isAdmin()) {
@@ -488,13 +480,27 @@ class LoginPlugin extends Plugin
         /** @var Twig $twig */
         $twig = $this->grav['twig'];
 
-        $this->grav->fireEvent('onLoginPage');
+        /** @var User $user */
+        $user = $this->grav['user'];
 
         $extension = $this->grav['uri']->extension();
         $extension = $extension ?: 'html';
 
         if (!$this->authenticated) {
             $twig->template = "login." . $extension . ".twig";
+        }
+
+        if (!$this->authenticated || !$user->authenticated) {
+            $providers = [];
+            foreach ($this->config->get('plugins.login.oauth.providers') as $provider => $options) {
+                if ($options['enabled'] && isset($options['credentials'])) {
+                    $providers[$provider] = $options['credentials'];
+                }
+            }
+            $twig->twig_vars['oauth'] = [
+                'enabled' => $this->config->get('plugins.login.oauth.enabled'),
+                'providers' => $providers
+            ];
         }
 
         // add CSS for frontend if required
@@ -517,105 +523,6 @@ class LoginPlugin extends Plugin
     }
 
     /**
-     * Process the user registration, triggered by a registration form
-     *
-     * @param Form $form
-     */
-    private function processUserRegistration($form, Event $event)
-    {
-        if (!$this->config->get('plugins.login.enabled')) {
-        throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.PLUGIN_LOGIN_DISABLED'));
-        }
-
-        if (!$this->config->get('plugins.login.user_registration.enabled')) {
-            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.USER_REGISTRATION_DISABLED'));
-        }
-
-        $data = [];
-        $username = $form->value('username');
-        $data['username'] = $username;
-
-        if (file_exists($this->grav['locator']->findResource('user://accounts/' . $username . YAML_EXT))) {
-            $this->grav->fireEvent('onFormValidationError', new Event([
-                'form'    => $form,
-                'message' => $this->grav['language']->translate([
-                    'PLUGIN_LOGIN.USERNAME_NOT_AVAILABLE',
-                    $username
-                ])
-            ]));
-            $event->stopPropagation();
-
-            return;
-        }
-
-        if ($this->config->get('plugins.login.user_registration.options.validate_password1_and_password2',
-            false)
-        ) {
-            if ($form->value('password1') != $form->value('password2')) {
-                $this->grav->fireEvent('onFormValidationError', new Event([
-                    'form'    => $form,
-                    'message' => $this->grav['language']->translate('PLUGIN_LOGIN.PASSWORDS_DO_NOT_MATCH')
-                ]));
-                $event->stopPropagation();
-
-                return;
-            }
-            $data['password'] = $form->value('password1');
-        }
-
-        $fields = $this->config->get('plugins.login.user_registration.fields', []);
-
-        foreach ($fields as $field) {
-            // Process value of field if set in the page process.register_user
-            $default_values = $this->config->get('plugins.login.user_registration.default_values');
-            if ($default_values) {
-                foreach ($default_values as $key => $param) {
-                    $values = explode(',', $param);
-
-                    if ($key == $field) {
-                        $data[$field] = $values;
-                    }
-                }
-            }
-
-            if (!isset($data[$field]) && $form->value($field)) {
-                $data[$field] = $form->value($field);
-            }
-        }
-
-        if ($this->config->get('plugins.login.user_registration.options.validate_password1_and_password2',
-            false)
-        ) {
-            unset($data['password1']);
-            unset($data['password2']);
-        }
-
-        if ($this->config->get('plugins.login.user_registration.options.set_user_disabled', false)) {
-            $data['state'] = 'disabled';
-        } else {
-            $data['state'] = 'enabled';
-        }
-
-        $user = $this->login->register($data);
-
-        if ($this->config->get('plugins.login.user_registration.options.send_activation_email', false)) {
-            $this->login->sendActivationEmail($user);
-        } else {
-            if ($this->config->get('plugins.login.user_registration.options.send_welcome_email', false)) {
-                $this->login->sendWelcomeEmail($user);
-            }
-            if ($this->config->get('plugins.login.user_registration.options.send_notification_email', false)) {
-                $this->login->sendNotificationEmail($user);
-            }
-        }
-
-        $redirect = $this->config->get('plugins.login.user_registration.redirect_after_registration', false);
-        if ($redirect) {
-            $this->grav->redirect($redirect);
-        }
-    }
-
-    /**
      * Process a registration form. Handles the following actions:
      *
      * - register_user: registers a user
@@ -626,12 +533,201 @@ class LoginPlugin extends Plugin
     {
         $form = $event['form'];
         $action = $event['action'];
+        $params = $event['params'];
 
         switch ($action) {
+
             case 'register_user':
-                $this->processUserRegistration($form, $event);
+
+                if (!$this->config->get('plugins.login.enabled')) {
+                    throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.PLUGIN_LOGIN_DISABLED'));
+                }
+
+                if (!$this->config->get('plugins.login.user_registration.enabled')) {
+                    throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.USER_REGISTRATION_DISABLED'));
+                }
+
+                $data = [];
+                $username = $form->value('username');
+
+                if (file_exists($this->grav['locator']->findResource('user://accounts/' . $username . YAML_EXT))) {
+                    $this->grav->fireEvent('onFormValidationError',
+                        new Event([
+                            'form' => $form,
+                            'message' => $this->grav['language']->translate(['PLUGIN_LOGIN.USERNAME_NOT_AVAILABLE', $username])
+                        ]));
+                    $event->stopPropagation();
+                    return;
+                }
+
+                if ($this->config->get('plugins.login.user_registration.options.validate_password1_and_password2', false)) {
+                    if ($form->value('password1') != $form->value('password2')) {
+                        $this->grav->fireEvent('onFormValidationError',
+                            new Event([
+                                'form' => $form,
+                                'message' => $this->grav['language']->translate('PLUGIN_LOGIN.PASSWORDS_DO_NOT_MATCH')
+                            ]));
+                        $event->stopPropagation();
+                        return;
+                    }
+                    $data['password'] = $form->value('password1');
+                }
+
+                $fields = $this->config->get('plugins.login.user_registration.fields', []);
+
+                foreach($fields as $field) {
+                    // Process value of field if set in the page process.register_user
+                    $default_values = $this->config->get('plugins.login.user_registration.default_values');
+                    if ($default_values) foreach($default_values as $key => $param) {
+                        $values = explode(',', $param);
+
+                        if ($key == $field) {
+                            $data[$field] = $values;
+                        }
+                    }
+
+                    if (!isset($data[$field]) && $form->value($field)) {
+                        $data[$field] = $form->value($field);
+                    }
+                }
+
+                if ($this->config->get('plugins.login.user_registration.options.validate_password1_and_password2', false)) {
+                    unset($data['password1']);
+                    unset($data['password2']);
+                }
+
+                // Don't store the username: that is part of the filename
+                unset($data['username']);
+
+                if ($this->config->get('plugins.login.user_registration.options.set_user_disabled', false)) {
+                    $data['state'] = 'disabled';
+                } else {
+                    $data['state'] = 'enabled';
+                }
+
+                // Create user object and save it
+                $user = new User($data);
+                $file = CompiledYamlFile::instance($this->grav['locator']->findResource('user://accounts/' . $username . YAML_EXT, true, true));
+                $user->file($file);
+                $user->save();
+                $user = User::load($username);
+
+                if ($data['state'] == 'enabled' &&
+                    $this->config->get('plugins.login.user_registration.options.login_after_registration', false)) {
+
+                    //Login user
+                    $this->grav['session']->user = $user;
+                    unset($this->grav['user']);
+                    $this->grav['user'] = $user;
+                    $user->authenticated = $user->authorize('site.login');
+                }
+
+                if ($this->config->get('plugins.login.user_registration.options.send_activation_email', false)) {
+                    $this->sendActivationEmail($user);
+                } else {
+                    if ($this->config->get('plugins.login.user_registration.options.send_welcome_email', false)) {
+                        $this->sendWelcomeEmail($user);
+                    }
+                    if ($this->config->get('plugins.login.user_registration.options.send_notification_email', false)) {
+                        $this->sendNotificationEmail($user);
+                    }
+                }
+
+                if ($redirect = $this->config->get('plugins.login.user_registration.redirect_after_registration', false)) {
+                    $this->grav->redirect($redirect);
+                }
+
                 break;
         }
     }
 
+    /**
+     * Handle the email to notificate the user account creation to the site admin.
+     *
+     * @return bool True if the action was performed.
+     */
+    protected function sendNotificationEmail($user)
+    {
+        if (empty($user->email)) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.USER_NEEDS_EMAIL_FIELD'));
+        }
+
+        $sitename = $this->grav['config']->get('site.title', 'Website');
+
+        $subject = $this->grav['language']->translate(['PLUGIN_LOGIN.NOTIFICATION_EMAIL_SUBJECT', $sitename]);
+        $content = $this->grav['language']->translate(['PLUGIN_LOGIN.NOTIFICATION_EMAIL_BODY', $sitename, $user->username, $user->email]);
+        $to = $this->grav['config']->get('plugins.email.from');
+
+        if (empty($to)) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.EMAIL_NOT_CONFIGURED'));
+        }
+
+        $sent = LoginUtils::sendEmail($subject, $content, $to);
+
+        if ($sent < 1) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
+        }
+
+        return true;
+    }
+
+    /**
+     * Handle the email to welcome the new user
+     *
+     * @return bool True if the action was performed.
+     */
+    protected function sendWelcomeEmail($user)
+    {
+        if (empty($user->email)) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.USER_NEEDS_EMAIL_FIELD'));
+        }
+
+        $sitename = $this->grav['config']->get('site.title', 'Website');
+
+        $subject = $this->grav['language']->translate(['PLUGIN_LOGIN.WELCOME_EMAIL_SUBJECT', $sitename]);
+        $content = $this->grav['language']->translate(['PLUGIN_LOGIN.WELCOME_EMAIL_BODY', $user->username, $sitename]);
+        $to = $user->email;
+
+        $sent = LoginUtils::sendEmail($subject, $content, $to);
+
+        if ($sent < 1) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
+        }
+
+        return true;
+    }
+
+    /**
+     * Handle the email to activate the user account.
+     *
+     * @return bool True if the action was performed.
+     */
+    protected function sendActivationEmail($user)
+    {
+        if (empty($user->email)) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.USER_NEEDS_EMAIL_FIELD'));
+        }
+
+        $token = md5(uniqid(mt_rand(), true));
+        $expire = time() + 604800; // next week
+        $user->activation_token = $token . '::' . $expire;
+        $user->save();
+
+        $param_sep = $this->grav['config']->get('system.param_sep', ':');
+        $activation_link = $this->grav['base_url_absolute'] . $this->config->get('plugins.login.route_activate') . '/token' . $param_sep . $token . '/username' . $param_sep . $user->username . '/nonce' . $param_sep . Utils::getNonce('user-activation');
+
+        $sitename = $this->grav['config']->get('site.title', 'Website');
+
+        $subject = $this->grav['language']->translate(['PLUGIN_LOGIN.ACTIVATION_EMAIL_SUBJECT', $sitename]);
+        $content = $this->grav['language']->translate(['PLUGIN_LOGIN.ACTIVATION_EMAIL_BODY', $user->username, $activation_link, $sitename]);
+        $to = $user->email;
+
+        $sent = LoginUtils::sendEmail($subject, $content, $to);
+
+        if ($sent < 1) {
+            throw new \RuntimeException($this->grav['language']->translate('PLUGIN_LOGIN.EMAIL_SENDING_FAILURE'));
+        }
+
+        return true;
+    }
 }

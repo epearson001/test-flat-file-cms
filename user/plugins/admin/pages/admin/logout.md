@@ -5,10 +5,10 @@ form:
     fields:
         - name: username
           type: text
-          placeholder: PLUGIN_ADMIN.USERNAME
+          placeholder: Username
           autofocus: true
 
         - name: password
           type: password
-          placeholder: PLUGIN_ADMIN.PASSWORD
+          placeholder: Password
 ---

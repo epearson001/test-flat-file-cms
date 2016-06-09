@@ -1,5 +1,4 @@
 {% extends 'partials/base.html.twig' %}
-{% set scope = scope ?: 'data.' %}
 
 {% block page %}
     <section id="admin-login" class="default-glow-shadow {{ classes }}">
@@ -15,7 +14,7 @@
             <div class="padding">
             {% block form %}{% endblock %}
 
-            {{ nonce_field('form', 'form-nonce')|raw }}
+            {{ nonce_field('form', 'form-nonce') }}
             </div>
         </form>
     </section>

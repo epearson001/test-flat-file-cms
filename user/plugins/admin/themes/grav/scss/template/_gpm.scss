@@ -1,35 +1,31 @@
 .gpm {
+
+    > table > tbody {
+        > tr {
+            border-bottom: 1px solid #e1e1e1;
+        }
+
+    }
+
     td {
         border: 0;
     }
 
     .gpm-name {
         white-space: nowrap;
-
-        @include breakpoint(mobile-only) {
-            white-space: normal;
-        }
+        color: lighten($content-fg, 25%);
     }
 
     .gpm-version {
         padding-left:0.5rem;
+        color: lighten($content-fg,10%);
         font-size: 0.9rem;
     }
 
-    .gpm-testing {
-        @extend .badge;
-        border-radius: 3px;
-        padding: 0 4px;
-        font-size: 0.75rem;
-    }
-
-    .theme .gpm-testing {
-        line-height: 1rem;
-        position: absolute;
-        top: 0;
-        right: 0;
-        border-radius: 0 0 0 3px;
-        line-height: 1.3;
+    .gpm-update {
+        .gpm-name {
+            color: $secondary-accent-bg;
+        }
     }
 
     .gpm-actions {
@@ -37,17 +33,25 @@
         .enabled, .disabled {
             font-size: 1.6rem;
         }
+
+        .disabled {
+            color: lighten($content-fg,10%);
+        }
     }
 
     .gpm-item-info {
         position: relative;
+        border-bottom: 3px solid darken($content-bg, 5%);
         padding-bottom: 1rem;
         margin-bottom: 3rem;
         overflow: hidden;
 
-
+        @include breakpoint(mobile-only) {
+            word-wrap: break-word;
+        }
 
         .gpm-item-icon {
+            color: darken($content-bg, 3%);
             position: absolute;
             right: $padding-default;
             font-size: 20rem;
@@ -59,43 +63,39 @@
             border: 0;
             text-align: left !important;
 
-            &.double {
-                padding-left: 2rem;
-            }
-
             &:first-child {
+                color: lighten($content-fg,15%);
                 white-space: nowrap;
-            }
-
-            @include breakpoint(mobile-only) {
-                word-wrap: break-word;
-                word-break: break-word;
-                @include hyphens(auto);
+                width: 25%;
             }
         }
         tr:hover {
             background: inherit;
         }
-
-
     }
 
     .badge.update {
         display: inline-block;
+        background: $info-bg;
         border-radius: 4px;
         padding: 2px 10px;
+        color: $info-fg;
         margin-left: 1rem;
     }
 
     .gpm-ribbon {
+        background-color: $info-bg;
         overflow: hidden;
         white-space: nowrap;
+
         position: absolute;
         top: 1rem;
         right: -2rem;
         @include transform(rotate(45deg));
 
+
         a {
+            color: $info-fg;
             display: block;
             font-weight: bold;
             font-size: 0.9rem;
@@ -112,6 +112,8 @@
         }
 
         .gpm-actions {
+
+            background: darken($content-bg, 2%);
             margin: 1rem -1rem -1rem -1rem;
             height: 4rem;
             text-align: center;
@@ -124,14 +126,18 @@
             line-height: 2rem;
         }
 
+        .active-theme {
+            border: 1px solid $secondary-accent-bg;
+            .gpm-actions {
+                background: $secondary-accent-bg;
+                color: $content-bg;
+            }
+        }
+
         .inactive-theme .gpm-actions {
             display: block;
+            color: darken($content-bg, 30%);
             font-weight: normal;
         }
-    }
-
-    #gpm-release-toggle {
-        float: right;
-        margin-right: 1rem;
     }
 }

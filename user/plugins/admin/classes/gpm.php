@@ -9,16 +9,10 @@ use Grav\Common\GPM\Upgrader;
 use Grav\Common\Filesystem\Folder;
 use Grav\Common\GPM\Common\Package;
 
-/**
- * Class Gpm
- * @package Grav\Plugin\Admin
- */
 class Gpm
 {
     // Probably should move this to Grav DI container?
-    /** @var GravGPM */
     protected static $GPM;
-
     public static function GPM()
     {
         if (!static::$GPM) {
@@ -67,8 +61,6 @@ class Gpm
             return false;
         }
 
-        $messages = '';
-
         foreach ($packages as $package) {
             if (isset($package->dependencies) && $options['install_deps']) {
                 $result = static::install($package->dependencies, $options);
@@ -95,22 +87,13 @@ class Gpm
             Folder::delete(dirname($local));
 
             $errorCode = Installer::lastErrorCode();
-            if ($errorCode) {
-                $msg = Installer::lastErrorMsg();
-                throw new \RuntimeException($msg);
-            }
 
-            if (count($packages) == 1) {
-                $message = Installer::getMessage();
-                if ($message) {
-                    return $message;
-                } else {
-                    $messages .= $message;
-                }
+            if (Installer::lastErrorCode() & (Installer::ZIP_OPEN_ERROR | Installer::ZIP_EXTRACT_ERROR)) {
+                return false;
             }
         }
 
-        return $messages ?: true;
+        return true;
     }
 
     /**
@@ -168,15 +151,7 @@ class Gpm
 
             $errorCode = Installer::lastErrorCode();
             if ($errorCode && $errorCode !== Installer::IS_LINK && $errorCode !== Installer::EXISTS) {
-                $msg = Installer::lastErrorMsg();
-                throw new \RuntimeException($msg);
-            }
-
-            if (count($packages) == 1) {
-                $message = Installer::getMessage();
-                if ($message) {
-                    return $message;
-                }
+                return false;
             }
         }
 
@@ -243,8 +218,7 @@ class Gpm
         }
 
         $update = $upgrader->getAssets()['grav-update'];
-        $cache_dir = Grav::instance()['locator']->findResource('cache://', true);
-        $tmp = $cache_dir . 'tmp/Grav-' . uniqid();
+        $tmp = CACHE_DIR . 'tmp/Grav-' . uniqid();
         $file = self::_downloadSelfupgrade($update, $tmp);
 
         Installer::install($file, GRAV_ROOT,
