@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "name": "master",
   "scripts": {},
   "env": {},
@@ -6,3 +7,19 @@
   "addons": [],
   "buildpacks": []
 }
+=======
+  "name": "test-flat-file-cms",
+  "scripts": {
+  },
+  "env": {
+  },
+  "formation": {
+  },
+  "addons": [
+
+  ],
+  "buildpacks": [
+
+  ]
+}
+>>>>>>> 8893409261d079d414ab92621edb06029d81b81c
